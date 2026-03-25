@@ -1,0 +1,450 @@
+import { Capacitor } from '@capacitor/core';
+
+// 🌐 Determine API base URL based on platform
+const getApiUrl = () => {
+  const isNative = Capacitor.isNativePlatform();
+  console.log('📱 Platform check - isNative:', isNative);
+
+  if (isNative) {
+    // For mobile, try multiple IP addresses for better connectivity
+    const mobileUrl = process.env.REACT_APP_API_URL_MOBILE ||
+                     (process.env.REACT_APP_LOCAL_IP ? `http://${process.env.REACT_APP_LOCAL_IP}:8081/api` : null) ||
+                     (process.env.REACT_APP_API_URL_MOBILE_FALLBACK) ||
+                     (process.env.REACT_APP_LOCAL_IP_FALLBACK ? `http://${process.env.REACT_APP_LOCAL_IP_FALLBACK}:8081/api` : null) ||
+                     process.env.REACT_APP_API_URL ||
+                     'https://your-production-api.com/api';
+    console.log('📱 Using mobile API URL:', mobileUrl);
+    console.log('📱 Fallback URL available:', !!process.env.REACT_APP_API_URL_MOBILE_FALLBACK);
+    return mobileUrl;
+  } else {
+    const webUrl = process.env.REACT_APP_API_URL || 'https://your-production-api.com/api';
+    console.log('💻 Using web API URL:', webUrl);
+    return webUrl;
+  }
+};
+
+const API_BASE_URL = getApiUrl();
+console.log('🔗 Final API_BASE_URL:', API_BASE_URL);
+
+// 🔄 Helper function to refresh Firebase token
+const refreshAuthToken = async (authInstance) => {
+  try {
+    if (authInstance && authInstance.currentUser) {
+      const newToken = await authInstance.currentUser.getIdToken(true); // Force refresh
+      localStorage.setItem('authToken', newToken);
+      console.log('🔄 Token refreshed successfully');
+      return newToken;
+    }
+    return null;
+  } catch (error) {
+    console.error('🚨 Error refreshing token:', error);
+    return null;
+  }
+};
+
+// 🛠️ Helper function to make API requests with comprehensive logging
+const apiRequest = async (endpoint, options = {}, authInstance = null) => {
+  const url = `${API_BASE_URL}${endpoint}`;
+  console.log(`🚀 Making API request to: ${url}`);
+  console.log('📊 Request options:', options);
+  
+  // Get auth token from localStorage
+  let authToken = localStorage.getItem('authToken');
+  console.log('🔐 Auth token available:', !!authToken);
+
+  // Detect FormData body to avoid forcing Content-Type header (browser must set multipart boundary)
+  const isFormDataBody = options && options.body && typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+  // Build headers carefully: do not set Content-Type for FormData
+  const headers = {
+    ...(authToken && { 'Authorization': `Bearer ${authToken}` }),
+    ...options.headers,
+  };
+
+  if (!isFormDataBody) {
+    // Only set JSON Content-Type when body is not FormData
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+  } else {
+    // Ensure Content-Type isn't set so browser will add correct multipart boundary
+    if (headers['Content-Type']) delete headers['Content-Type'];
+  }
+
+  const config = {
+    ...options,
+    headers,
+  };
+  
+  console.log('⚙️ Final request config:', config);
+  
+  try {
+  const response = await fetch(url, config);
+    console.log(`✅ Response status: ${response.status} ${response.statusText}`);
+    
+    // If we get a 401/403, try to refresh the token and retry once
+    if ((response.status === 401 || response.status === 403) && authToken && authInstance) {
+      console.log('🔄 Token expired, attempting to refresh...');
+      const newToken = await refreshAuthToken(authInstance);
+      
+      if (newToken) {
+        // Retry the request with the new token
+        const retryConfig = {
+          ...config,
+          headers: {
+            ...config.headers,
+            'Authorization': `Bearer ${newToken}`
+          }
+        };
+        
+        console.log('🔄 Retrying request with refreshed token...');
+        const retryResponse = await fetch(url, retryConfig);
+        console.log(`✅ Retry response status: ${retryResponse.status} ${retryResponse.statusText}`);
+        
+        if (!retryResponse.ok) {
+          console.error(`❌ API Error after token refresh: ${retryResponse.status} - ${retryResponse.statusText}`);
+          throw new Error(`HTTP error! status: ${retryResponse.status}`);
+        }
+        
+        // Parse and return the retry response
+        const retryData = await retryResponse.json();
+        console.log('✅ Retry response data:', retryData);
+        return retryData;
+      } else {
+        console.error('❌ Failed to refresh token');
+        throw new Error('Authentication failed - unable to refresh token');
+      }
+    }
+    
+    if (!response.ok) {
+      // Try to parse server error body to include useful details
+      let errorBody = null;
+      try {
+        const ct = response.headers.get('content-type') || '';
+        if (ct.includes('application/json')) {
+          errorBody = await response.json();
+        } else {
+          errorBody = await response.text();
+        }
+      } catch (parseErr) {
+        // ignore parse errors
+      }
+
+      console.error(`❌ API Error: ${response.status} - ${response.statusText}`, errorBody);
+
+      const err = new Error(`HTTP error! status: ${response.status}`);
+      err.status = response.status;
+      err.response = { data: errorBody };
+      throw err;
+    }
+
+    // Parse JSON responses
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await response.json();
+      return data;
+    }
+
+    // For non-JSON responses, return the text
+    const data = await response.text();
+    console.log('📦 Response data:', data);
+    return data;
+  } catch (error) {
+    // More detailed logging for network errors
+    if (error && error.name === 'TypeError') {
+      // Often a network error / CORS or blocked request
+      console.error(`💥 Network or CORS error when requesting ${url}:`, error.message);
+    } else {
+      console.error(`💥 API Request failed for ${endpoint}:`, error);
+    }
+    throw error;
+  }
+};
+
+// 👤 User API functions
+export const getUserProfile = async () => {
+  return apiRequest('/users/profile');
+};
+
+export const updateUserProfile = async (userData) => {
+  return apiRequest('/users/profile', {
+    method: 'PUT',
+    body: JSON.stringify(userData),
+  });
+};
+
+export const createUser = async (userData) => {
+  return apiRequest('/users/register', {
+    method: 'POST',
+    body: JSON.stringify(userData),
+  });
+};
+
+// 💰 Expense API functions
+export const getExpenses = async (params = {}) => {
+  let endpoint = '/expenses';
+
+  const data = await apiRequest(endpoint);
+
+  console.log("Raw expenses response:", data);
+
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.expenses)) return data.expenses; // 🔥 THIS WAS MISSING
+  if (data && Array.isArray(data.data)) return data.data;
+  if (data && Array.isArray(data.content)) return data.content;
+
+  return [];
+};
+
+
+export const createExpense = async (expenseData) => {
+  return apiRequest('/expenses', {
+    method: 'POST',
+    body: JSON.stringify(expenseData),
+  });
+};
+
+export const updateExpense = async (id, expenseData) => {
+  return apiRequest(`/expenses/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(expenseData),
+  });
+};
+
+export const deleteExpense = async (id) => {
+  return apiRequest(`/expenses/${id}`, {
+    method: 'DELETE',
+  });
+};
+
+// 📊 Budget API functions
+export const getBudgets = async (params = {}) => {
+  let endpoint = '/budgets';
+  if (params.month || params.year) {
+    const queryParams = new URLSearchParams();
+    if (params.month) queryParams.append('month', params.month);
+    if (params.year) queryParams.append('year', params.year);
+    endpoint += `?${queryParams}`;
+  }
+  const data = await apiRequest(endpoint);
+  // Normalize response to always be an array
+  // Backend returns { budgets: [...] } structure
+  if (Array.isArray(data)) return data;
+  if (data && Array.isArray(data.budgets)) return data.budgets;
+  if (data && Array.isArray(data.data)) return data.data;
+  if (data && typeof data === 'object') return [data];
+  return [];
+};
+
+export const createBudget = async (budgetData) => {
+  return apiRequest('/budgets', {
+    method: 'POST',
+    body: JSON.stringify(budgetData),
+  });
+};
+
+export const updateBudget = async (id, budgetData) => {
+  return apiRequest(`/budgets/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(budgetData),
+  });
+};
+
+export const deleteBudget = async (id) => {
+  return apiRequest(`/budgets/${id}`, {
+    method: 'DELETE',
+  });
+};
+
+// 📈 Reports API functions
+export const getFinancialReport = async (startDate, endDate) => {
+  const params = new URLSearchParams({
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0],
+  });
+  return apiRequest(`/reports/financial?${params}`);
+};
+
+export const getExpensesByCategory = async () => {
+  return apiRequest('/reports/expenses-by-category');
+};
+
+export const getMonthlyTrends = async () => {
+  return apiRequest('/reports/monthly-trends');
+};
+
+// 🔍 Receipt scanning
+export const uploadReceipt = async (file) => {
+  const formData = new FormData();
+  formData.append('receipt', file);
+  
+  return apiRequest('/receipts/upload', {
+    method: 'POST',
+    body: formData,
+    headers: {}, // Remove Content-Type to let browser set it for FormData
+  });
+};
+
+// 🤖 AI Tips functions
+export const getDailyTip = async (userCurrency = 'USD') => {
+  // Map currency to country/region for location-based tips
+  const currencyToCountry = {
+  'INR': 'India',
+    'USD': 'United States', 
+    'EUR': 'Europe',
+    'GBP': 'United Kingdom',
+    'JPY': 'Japan',
+    'AUD': 'Australia',
+    'CAD': 'Canada',
+    'CHF': 'Switzerland',
+    'CNY': 'China',
+    'INR': 'India',
+    'BRL': 'Brazil'
+  };
+
+  const country = currencyToCountry[userCurrency] || 'Global';
+  
+  try {
+    console.log(`🌍 Fetching AI tips for: ${country} (${userCurrency})`);
+    
+    // Try personalized tips first
+    try {
+      console.log('🎯 Attempting to get personalized AI tip...');
+      const personalizedResponse = await apiRequest('/ai-tips/personalized', {
+        method: 'GET'
+      });
+      
+      if (personalizedResponse && personalizedResponse.tip) {
+        console.log('✅ Got personalized AI tip:', personalizedResponse.tip);
+        return {
+          ...personalizedResponse,
+          personalized: true,
+          currency: userCurrency,
+          country: country
+        };
+      }
+    } catch (personalizedError) {
+      console.log('⚠️ Personalized tips not available, falling back to daily tips');
+    }
+    
+    // Fallback to daily tips with auth
+    const response = await apiRequest(`/ai-tips/daily?currency=${userCurrency}&country=${encodeURIComponent(country)}`, {
+      method: 'GET'
+    });
+    return {
+      ...response,
+      personalized: false,
+      currency: userCurrency,
+      country: country
+    };
+  } catch (error) {
+    console.error('Error fetching daily tip:', error);
+    // Return fallback tip based on currency/location
+    return {
+      tip: getFallbackTip(userCurrency),
+      category: 'general',
+      currency: userCurrency,
+      country: currencyToCountry[userCurrency] || 'Global',
+      personalized: false
+    };
+  }
+};
+
+const getFallbackTip = (currency) => {
+  const fallbackTips = {
+  'INR': '�� Consider SIPs in large-cap mutual funds or a PPF for long-term growth; use UPI for easy transfers and auto-investing.',
+    'EUR': 'Take advantage of European banking benefits and consider SEPA transfers for cost-effective international transactions within Europe. European investment funds offer good diversification opportunities.',
+    'GBP': 'With Brexit impacts on the UK economy, consider diversifying investments and explore ISA accounts for tax-efficient savings. Premium bonds offer a safe investment option.',
+    'USD': 'Consider dollar-cost averaging into S&P 500 index funds and take advantage of 401(k) employer matching if available. Roth IRA contributions can provide tax-free growth.',
+    'JPY': 'Japan offers unique savings programs and investment opportunities. Consider Japanese Government Bonds (JGBs) for stability and NISA accounts for tax-advantaged investing.',
+    'AUD': 'Australia\'s superannuation system is excellent for retirement planning. Consider salary sacrificing and diversifying with Australian and international ETFs.',
+    'CAD': 'Take advantage of Tax-Free Savings Accounts (TFSA) and Registered Retirement Savings Plans (RRSP) in Canada. Both offer excellent tax benefits for long-term wealth building.',
+    'default': '💡 Track every expense for better financial awareness - small purchases add up faster than you think! Consider automating your savings and investing in diversified index funds.'
+  };
+  
+  return fallbackTips[currency] || fallbackTips['default'];
+};
+
+// 🖼️ Profile picture functions
+export const updateProfilePicture = async (base64Image) => {
+  return apiRequest('/users/profile/picture', {
+    method: 'PUT',
+    body: JSON.stringify({ profilePicture: base64Image }),
+  });
+};
+
+// 🗑️ User account functions
+export const deleteUser = async () => {
+  const response = await apiRequest('/users/profile', {
+    method: 'DELETE',
+  });
+  // Return true if the deletion was successful
+  return response === "User deleted successfully";
+};
+
+// 🎯 Multiple AI Tips function
+export const getMultipleTips = async () => {
+  try {
+    console.log('🎯 Fetching multiple AI tips...');
+    const response = await apiRequest('/ai-tips/multiple', {
+      method: 'GET'
+    });
+    
+    if (response && response.tips) {
+      console.log('✅ Got multiple AI tips:', response.tips);
+      return response;
+    }
+    
+    // Fallback to single tip if multiple tips not available
+    const singleTip = await getDailyTip();
+    return {
+      tips: [singleTip.tip],
+      personalized: singleTip.personalized
+    };
+  } catch (error) {
+    console.error('🚨 Error fetching multiple AI tips:', error);
+    const fallbackTip = await getDailyTip();
+    return {
+      tips: [fallbackTip.tip],
+      personalized: false,
+      error: true
+    };
+  }
+};
+
+// 🤖 AI Chatbot function
+export const sendChatMessage = async (message, userContext = {}, authInstance = null) => {
+  try {
+    console.log('🤖 Sending chat message:', message);
+    
+    // Add timeout to prevent infinite loading
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Chatbot request timeout')), 30000); // 30 second timeout
+    });
+    
+    const apiPromise = apiRequest('/ai-chatbot', {
+      method: 'POST',
+      body: JSON.stringify({
+  message,
+  currency: userContext.currency || 'INR',
+  region: userContext.region || 'IN',
+        userContext
+      })
+    }, authInstance);
+    
+    const response = await Promise.race([apiPromise, timeoutPromise]);
+    
+    if (response && response.reply) {
+      console.log('✅ Got chatbot reply:', response.reply);
+      return response;
+    }
+    
+    throw new Error('No reply received from chatbot');
+  } catch (error) {
+    console.error('🚨 Error sending chat message:', error);
+    throw error;
+  }
+};
+
+// Export the apiRequest function for use in components
+export { apiRequest };
+
+console.log('✨ API service initialized with base URL:', API_BASE_URL);

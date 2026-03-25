@@ -1,0 +1,45 @@
+body {
+    background-color: #E6E6FA; /* Lavender background */
+    color: #4B0082; /* Darker shade for text */
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 0;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    color: #6A5ACD; /* SlateBlue for headings */
+}
+
+a {
+    color: #9370DB; /* MediumPurple for links */
+    text-decoration: none;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.button {
+    background-color: #8A2BE2; /* BlueViolet for buttons */
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+.button:hover {
+    background-color: #7B68EE; /* MediumSlateBlue on hover */
+}
+
+.footer {
+    background-color: #DDA0DD; /* Plum for footer */
+    text-align: center;
+    padding: 10px 0;
+}

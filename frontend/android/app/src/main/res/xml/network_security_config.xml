@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Development configuration - allows HTTP for local development -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- Localhost and emulator -->
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+
+        <!-- Your current IP addresses -->
+        <domain includeSubdomains="false">192.168.1.91</domain>
+        <domain includeSubdomains="false">192.168.106.25</domain>
+        <domain includeSubdomains="false">192.168.128.170</domain>
+
+        <!-- Common private IP ranges for development -->
+        <domain includeSubdomains="true">192.168.1.0</domain>
+        <domain includeSubdomains="true">192.168.0.0</domain>
+        <domain includeSubdomains="true">192.168.106.0</domain>
+        <domain includeSubdomains="true">192.168.128.0</domain>
+        <domain includeSubdomains="true">10.0.0.0</domain>
+        <domain includeSubdomains="true">172.16.0.0</domain>
+    </domain-config>
+
+    <!-- For production, use HTTPS only -->
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>
